@@ -1,8 +1,3 @@
-# Build workflow that clones upstream source at runtime and builds it.
-# - Keeps only workflow in this repo.
-# - Clones gyunaev/birdtray into runner_workspace/upstream and builds from it.
-# - Optional overrides/ directory in this repo can patch upstream before build.
-# - Parameter upstream_ref can be provided via workflow_dispatch to pin a branch/tag/sha.
 name: Build
 
 on:
@@ -21,7 +16,6 @@ on:
         required: false
 
 env:
-  # Default upstream repository and ref (can be overridden by workflow_dispatch inputs)
   DEFAULT_UPSTREAM_REPO: 'https://github.com/gyunaev/birdtray.git'
   DEFAULT_UPSTREAM_REF: 'main'
 
@@ -31,9 +25,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # Only run Windows jobs (removed ubuntu-latest entries)
         os: [windows-latest]
-        # Keep/testing the desired Qt version(s) for Windows; adjust if you want multiple
         qt_version: [6.8.0]
         include:
           - os: windows-latest
@@ -69,7 +61,7 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" == "Linux" ]; then
-            sudo apt-get update -qq;
+            sudo apt-get update -qq
             sudo apt install -qq libx11-dev libx11-xcb-dev desktop-file-utils appstream-util
           elif [ "$RUNNER_OS" == "Windows" ]; then
             choco install -y --force openssl.light --version=1.1.1
@@ -87,14 +79,12 @@ jobs:
           UPSTREAM_REF="${{ steps.upstream.outputs.upstream_ref }}"
           echo "Requested upstream: $UPSTREAM_REPO @$UPSTREAM_REF"
 
-          # Determine if requested ref exists as branch or tag on remote
           REF_TO_CLONE=""
           if git ls-remote --exit-code --heads "$UPSTREAM_REPO" "$UPSTREAM_REF" >/dev/null 2>&1 || \
              git ls-remote --exit-code --tags "$UPSTREAM_REPO" "$UPSTREAM_REF" >/dev/null 2>&1; then
             REF_TO_CLONE="$UPSTREAM_REF"
             echo "Requested ref exists on remote: $REF_TO_CLONE"
           else
-            # Discover remote default branch from symref HEAD
             DEFAULT_BRANCH=$(git ls-remote --symref "$UPSTREAM_REPO" HEAD 2>/dev/null | awk '/^ref: refs\/heads\//{print $2}' | sed 's@refs/heads/@@' | head -n1 || true)
             if [ -n "$DEFAULT_BRANCH" ]; then
               echo "Requested ref '$UPSTREAM_REF' not found; falling back to remote default branch '$DEFAULT_BRANCH'"
@@ -106,10 +96,8 @@ jobs:
           fi
 
           echo "resolved_upstream_ref=$REF_TO_CLONE" >> $GITHUB_OUTPUT
-
           mkdir -p "${{ runner.workspace }}/upstream"
 
-          # Try shallow clone for speed; if it fails, do full clone+checkout
           if git clone --depth 1 --branch "$REF_TO_CLONE" "$UPSTREAM_REPO" "${{ runner.workspace }}/upstream"; then
             echo "Shallow clone of $REF_TO_CLONE succeeded"
           else
@@ -118,7 +106,6 @@ jobs:
             git clone "$UPSTREAM_REPO" "${{ runner.workspace }}/upstream"
             cd "${{ runner.workspace }}/upstream"
             git fetch --all --tags --prune
-            # If the originally requested ref exists locally after fetch, prefer it; otherwise checkout resolved
             if git rev-parse --verify --quiet "refs/heads/$UPSTREAM_REF" >/dev/null 2>&1 || git rev-parse --verify --quiet "$UPSTREAM_REF" >/dev/null 2>&1; then
               git checkout "$UPSTREAM_REF" || true
             else
@@ -130,7 +117,6 @@ jobs:
         shell: bash
         run: |
           set -e
-          # if you want to patch upstream, put files under overrides/ in this repo.
           if [ -d "${{ github.workspace }}/overrides" ]; then
             echo "Applying overrides from this repo to upstream..."
             cp -a "${{ github.workspace }}/overrides/." "${{ runner.workspace }}/upstream/" || true
@@ -180,28 +166,22 @@ jobs:
           fi
           cd "$BUILD_DIR"
 
-          echo "Attempting parallel build (MSBuild-friendly flags)..."
-          if cmake --build . --config Release --target birdtray -- /m; then
-            echo "Build finished (parallel)."
-          else
-            echo "Parallel build attempt failed; retrying without extra flags to capture output..."
-            if ! cmake --build . --config Release --target birdtray; then
-              echo "Build FAILED. Dumping diagnostics..."
-              echo "Top-level build dir listing:"
-              ls -la . || true
-              echo "Release dir listing:"
-              ls -la Release || true
-              # show any log files
-              find . -type f \( -iname "*.log" -o -iname "*.out" -o -iname "*.txt" \) -maxdepth 4 -print | while read f; do
-                echo "---- tail $f ----"
-                tail -n 200 "$f" || true
-              done
-              if [ -f CMakeFiles/CMakeOutput.log ]; then
-                echo "---- CMakeOutput.log ----"
-                tail -n 200 CMakeFiles/CMakeOutput.log || true
-              fi
-              exit 1
+          echo "Building birdtray (single-invocation cmake --build)..."
+          if ! cmake --build . --config Release --target birdtray; then
+            echo "Build FAILED. Dumping diagnostics..."
+            echo "Top-level build dir listing:"
+            ls -la . || true
+            echo "Release dir listing:"
+            ls -la Release || true
+            find . -type f \( -iname "*.log" -o -iname "*.out" -o -iname "*.txt" \) -maxdepth 4 -print | while read f; do
+              echo "---- tail $f ----"
+              tail -n 200 "$f" || true
+            done
+            if [ -f CMakeFiles/CMakeOutput.log ]; then
+              echo "---- CMakeOutput.log ----"
+              tail -n 200 CMakeFiles/CMakeOutput.log || true
             fi
+            exit 1
           fi
 
           echo "Build succeeded. Listing Release folder:"
@@ -215,16 +195,34 @@ jobs:
           echo "::remove-matcher owner=compiler-gcc::"
           echo "::remove-matcher owner=compiler-msvc::"
 
-      - name: Tests (guarded)
+      - name: Tests (guarded - only if tests project exists)
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -d "${{ runner.workspace }}/build" ]; then
+          BUILD_DIR="${{ runner.workspace }}/build"
+          if [ ! -d "$BUILD_DIR" ]; then
             echo "Build directory not found; skipping tests."
             exit 0
           fi
-          cd "${{ runner.workspace }}/build"
+          # Look for a tests.vcxproj (Visual Studio generator) as an indicator
+          TEST_PROJECT=$(find "$BUILD_DIR" -maxdepth 2 -type f -iname 'tests.vcxproj' -print -quit || true)
+          if [ -z "$TEST_PROJECT" ]; then
+            echo "No tests project found; skipping tests."
+            exit 0
+          fi
+          echo "Found tests project: $TEST_PROJECT"
+          cd "$BUILD_DIR"
           cmake --build . --config Release --target tests && cmake --build . --config Release --target run_tests
+
+      - name: Check if this is a deployment build
+        id: check-deploy
+        shell: bash
+        run: |
+          if [[ '${{ github.event.ref }}' =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ && "$RUNNER_OS" == "Windows" ]]; then
+            echo "is_deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_deploy=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Bundle Qt dependencies (windeployqt) on Windows (guarded)
         if: runner.os == 'Windows'
@@ -247,8 +245,8 @@ jobs:
           echo "Using windeployqt: $WINDEPLOYQT"
           "$WINDEPLOYQT" --release --dir "${{ runner.workspace }}/dist" "${{ runner.workspace }}/build/Release/birdtray.exe" || true
 
-      - name: Install to staging dir (cmake --install) (guarded with explicit exe check)
-        if: always()
+      - name: Install to staging dir (cmake --install) (deploy only, guarded with explicit exe check)
+        if: steps.check-deploy.outputs.is_deploy == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -256,7 +254,7 @@ jobs:
           EXE_PATH="${BUILD_DIR}/Release/birdtray.exe"
           if [ ! -d "$BUILD_DIR" ]; then
             echo "Build directory not found; skipping cmake --install."
-            exit 0
+            exit 1
           fi
           if [ ! -f "$EXE_PATH" ]; then
             echo "ERROR: birdtray.exe not found at expected path: $EXE_PATH"
@@ -264,7 +262,6 @@ jobs:
             ls -la "$BUILD_DIR" || true
             echo "Release dir listing:"
             ls -la "${BUILD_DIR}/Release" || true
-            # Print CMake build logs if present
             if [ -f "${BUILD_DIR}/CMakeFiles/CMakeOutput.log" ]; then
               echo "---- CMakeOutput.log ----"
               tail -n 200 "${BUILD_DIR}/CMakeFiles/CMakeOutput.log" || true
@@ -306,7 +303,6 @@ jobs:
             fi
           fi
 
-          # Collect translations from upstream source and build output
           cp -r "${{ runner.workspace }}/upstream/src/res/translations/"* "${{ runner.workspace }}/dist/translations/" 2>/dev/null || true
           cp -r "${{ runner.workspace }}/upstream/src/res/locales/"* "${{ runner.workspace }}/dist/translations/" 2>/dev/null || true
           cp -r "${{ runner.workspace }}/upstream/po/"* "${{ runner.workspace }}/dist/translations/" 2>/dev/null || true
@@ -358,24 +354,14 @@ jobs:
         run: |
           output=$(desktop-file-validate src/res/com.ulduzsoft.Birdtray.desktop)
           if [ ! -z "$output" ]; then
-            echo "$output";
-            exit 1;
+            echo "$output"
+            exit 1
           fi
           appstream-util validate src/res/com.ulduzsoft.Birdtray.appdata.xml
 
-      - name: Check if this is a deployment build
-        id: check-deploy
-        shell: bash
-        run: |
-          if [[ '${{ github.event.ref }}' =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ && "$RUNNER_OS" == "Windows" ]]; then
-            echo "is_deploy=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_deploy=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Install installer dependencies (deploy only)
         if: steps.check-deploy.outputs.is_deploy == 'true'
-        run: choco install -y nsis --version=3.11;
+        run: choco install -y nsis --version=3.11
 
       - name: Create installer (deploy only) (guarded)
         if: steps.check-deploy.outputs.is_deploy == 'true'
@@ -384,7 +370,7 @@ jobs:
           set -euo pipefail
           if [ ! -d "${{ runner.workspace }}/build" ]; then
             echo "Build directory not found; skipping installer creation."
-            exit 0
+            exit 1
           fi
           cd "${{ runner.workspace }}/build"
           cmake --build . --config Release --target install
@@ -394,7 +380,7 @@ jobs:
         id: find_installer_file
         shell: bash
         run: |
-          installerFile=`find . -name "Birdtray-*.exe" -exec basename {} \;`
+          installerFile=$(find . -name "Birdtray-*.exe" -exec basename {} \; 2>/dev/null || true)
           echo "installer_file=$installerFile" >> $GITHUB_OUTPUT
           echo "Found installer: $installerFile"
           mkdir -p installer/cache
