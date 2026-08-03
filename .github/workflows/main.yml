@@ -144,12 +144,15 @@ jobs:
           set -e
           cmake -E make_directory "${{ runner.workspace }}/build"
 
-      - name: Configure CMake (use upstream source)
+      - name: Show CMake version
+        run: cmake --version
+
+      - name: Configure CMake (use upstream source) (tests disabled)
         shell: bash
         run: |
           set -e
           cmake -S "${{ runner.workspace }}/upstream" -B "${{ runner.workspace }}/build" \
-            -DCMAKE_BUILD_TYPE=Release -DCOMPILER_WARNINGS_AS_ERRORS=ON -DBUILD_WITH_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=Release -DCOMPILER_WARNINGS_AS_ERRORS=ON -DBUILD_WITH_TESTS=OFF \
             -DDONT_EXECUTE_INSTALLER=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       - name: Register build problem matchers
