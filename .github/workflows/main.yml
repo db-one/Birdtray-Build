@@ -33,7 +33,7 @@ jobs:
 
     steps:
       - name: Checkout this repository (workflow + optional overrides)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
@@ -327,7 +327,7 @@ jobs:
 
       - name: Upload build artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: birdtray-${{ runner.os }}-${{ github.sha }}
           path: |
@@ -387,7 +387,7 @@ jobs:
           mv installer/$installerFile installer/cache || true
 
       - name: Cache installer (deploy only)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: steps.check-deploy.outputs.is_deploy == 'true'
         with:
           name: installer-${{ runner.os }}-${{ github.sha }}
@@ -400,7 +400,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout this repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check if this is a deployment build
         id: deploy_check
