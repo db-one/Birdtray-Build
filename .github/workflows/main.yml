@@ -204,6 +204,7 @@ jobs:
             echo "Build directory not found; skipping tests."
             exit 0
           fi
+          # Look for a tests.vcxproj (Visual Studio generator) as an indicator
           TEST_PROJECT=$(find "$BUILD_DIR" -maxdepth 2 -type f -iname 'tests.vcxproj' -print -quit || true)
           if [ -z "$TEST_PROJECT" ]; then
             echo "No tests project found; skipping tests."
@@ -336,16 +337,6 @@ jobs:
             ${{ runner.workspace }}/build/**/*.dll
             ${{ runner.workspace }}/upstream/src/res/**/locales/**
             ${{ runner.workspace }}/upstream/src/res/**/translations/**
-
-      - name: Delete build directory (final cleanup)
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Deleting build directory (final cleanup): ${{ runner.workspace }}/build"
-          rm -rf "${{ runner.workspace }}/build" || true
-          echo "After deletion, workspace root listing:"
-          ls -la "${{ runner.workspace }}" || true
 
       - name: Remove build directory (cleanup for non-deploy builds)
         if: ${{ always() && !(github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')) }}
