@@ -145,6 +145,7 @@ jobs:
           cmake -E make_directory "${{ runner.workspace }}/build"
 
       - name: Show CMake version
+        shell: bash
         run: cmake --version
 
       - name: Configure CMake (use upstream source) (tests disabled)
@@ -155,23 +156,59 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release -DCOMPILER_WARNINGS_AS_ERRORS=ON -DBUILD_WITH_TESTS=OFF \
             -DDONT_EXECUTE_INSTALLER=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
-      - name: Register build problem matchers
-        run: |
-          echo "::add-matcher::.github/problem-matchers/linguist.json"
-          echo "::add-matcher::.github/problem-matchers/compiler.json"
-
-      - name: Build (guarded)
+      - name: Register build problem matchers (safe)
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -d "${{ runner.workspace }}/build" ]; then
+          for matcher in .github/problem-matchers/linguist.json .github/problem-matchers/compiler.json; do
+            if [ -f "$matcher" ]; then
+              echo "Adding matcher: $matcher"
+              echo "::add-matcher::$matcher"
+            else
+              echo "Matcher not found, skipping: $matcher"
+            fi
+          done
+
+      - name: Build (guarded, verbose)
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR="${{ runner.workspace }}/build"
+          if [ ! -d "$BUILD_DIR" ]; then
             echo "Build directory not found; aborting build step."
             exit 1
           fi
-          cd "${{ runner.workspace }}/build"
-          cmake --build . --config Release --target birdtray
+          cd "$BUILD_DIR"
+
+          echo "Attempting parallel build (MSBuild-friendly flags)..."
+          if cmake --build . --config Release --target birdtray -- /m; then
+            echo "Build finished (parallel)."
+          else
+            echo "Parallel build attempt failed; retrying without extra flags to capture output..."
+            if ! cmake --build . --config Release --target birdtray; then
+              echo "Build FAILED. Dumping diagnostics..."
+              echo "Top-level build dir listing:"
+              ls -la . || true
+              echo "Release dir listing:"
+              ls -la Release || true
+              # show any log files
+              find . -type f \( -iname "*.log" -o -iname "*.out" -o -iname "*.txt" \) -maxdepth 4 -print | while read f; do
+                echo "---- tail $f ----"
+                tail -n 200 "$f" || true
+              done
+              if [ -f CMakeFiles/CMakeOutput.log ]; then
+                echo "---- CMakeOutput.log ----"
+                tail -n 200 CMakeFiles/CMakeOutput.log || true
+              fi
+              exit 1
+            fi
+          fi
+
+          echo "Build succeeded. Listing Release folder:"
+          ls -la Release || true
 
       - name: Remove build problem matchers
+        shell: bash
         run: |
           echo "::remove-matcher owner=linguist::"
           echo "::remove-matcher owner=linguist-old::"
@@ -210,16 +247,31 @@ jobs:
           echo "Using windeployqt: $WINDEPLOYQT"
           "$WINDEPLOYQT" --release --dir "${{ runner.workspace }}/dist" "${{ runner.workspace }}/build/Release/birdtray.exe" || true
 
-      - name: Install to staging dir (cmake --install) (guarded)
+      - name: Install to staging dir (cmake --install) (guarded with explicit exe check)
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -d "${{ runner.workspace }}/build" ]; then
+          BUILD_DIR="${{ runner.workspace }}/build"
+          EXE_PATH="${BUILD_DIR}/Release/birdtray.exe"
+          if [ ! -d "$BUILD_DIR" ]; then
             echo "Build directory not found; skipping cmake --install."
             exit 0
           fi
-          cd "${{ runner.workspace }}/build"
+          if [ ! -f "$EXE_PATH" ]; then
+            echo "ERROR: birdtray.exe not found at expected path: $EXE_PATH"
+            echo "Build dir listing:"
+            ls -la "$BUILD_DIR" || true
+            echo "Release dir listing:"
+            ls -la "${BUILD_DIR}/Release" || true
+            # Print CMake build logs if present
+            if [ -f "${BUILD_DIR}/CMakeFiles/CMakeOutput.log" ]; then
+              echo "---- CMakeOutput.log ----"
+              tail -n 200 "${BUILD_DIR}/CMakeFiles/CMakeOutput.log" || true
+            fi
+            exit 1
+          fi
+          cd "$BUILD_DIR"
           cmake --install . --config Release --prefix "${{ runner.workspace }}/dist" || true
 
       - name: Prepare dist contents (move dist/bin/birdtray.exe -> dist/, collect translations)
