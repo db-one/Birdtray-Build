@@ -197,7 +197,7 @@ jobs:
           ls -la "$WORKSPACE/dist" || true
           ls -la "$WORKSPACE/dist/translations" || true
 
-      - name: (optional) Debug: show build/workspace layout
+      - name: (optional) Debug show build/workspace layout
         if: ${{ always() && steps.upstream.outputs.debug == 'true' }}
         shell: bash
         run: |
