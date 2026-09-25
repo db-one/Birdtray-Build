@@ -1,16 +1,16 @@
-name: Build
+name: 构建 Birdtray（上游源码）
 
 on:
   workflow_dispatch:
     inputs:
       upstream_ref:
-        description: 'Upstream branch/tag/commit to build (default: main)'
+        description: '要构建的上游分支/标签/提交（默认：main）'
         required: false
       upstream_repo:
-        description: 'Upstream repo URL (default: https://github.com/gyunaev/birdtray.git)'
+        description: '要构建的上游仓库 URL（默认：https://github.com/gyunaev/birdtray.git）'
         required: false
       debug:
-        description: 'Enable additional debug output (true/false)'
+        description: '是否输出额外调试信息（true 或 false）'
         required: false
 
 env:
@@ -19,7 +19,7 @@ env:
 
 jobs:
   build:
-    name: Build
+    name: 构建
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -30,12 +30,12 @@ jobs:
             qt_compile_suite: win64_msvc2022_64
 
     steps:
-      - name: Checkout this repository (workflow + optional overrides)
+      - name: 检出本仓库（workflow 与可选 overrides）
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
-      - name: Determine upstream repo/ref
+      - name: 确定上游仓库与 ref
         id: upstream
         shell: bash
         run: |
@@ -47,7 +47,7 @@ jobs:
           echo "upstream_ref=$UPSTREAM_REF" >> $GITHUB_OUTPUT
           echo "debug=$DEBUG" >> $GITHUB_OUTPUT
 
-      - name: Install Qt ${{ matrix.qt_version }}
+      - name: 安装 Qt ${{ matrix.qt_version }}
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ matrix.qt_version }}
@@ -55,7 +55,7 @@ jobs:
           cache: true
           dir: ${{ runner.temp }}/Qt
 
-      - name: Install additional dependencies
+      - name: 安装附加依赖
         shell: bash
         run: |
           if [ "$RUNNER_OS" == "Linux" ]; then
@@ -65,30 +65,30 @@ jobs:
             choco install -y --force openssl.light --version=1.1.1
             echo "C:\Program Files\OpenSSL" >> $GITHUB_PATH
           else
-            echo "$RUNNER_OS not supported"
+            echo "$RUNNER_OS 不受支持"
             exit 1
           fi
 
-      - name: Clone upstream source (gyunaev/birdtray) (robust)
+      - name: 克隆上游源码（gyunaev/birdtray，带回退）
         shell: bash
         run: |
           set -euo pipefail
           UPSTREAM_REPO="${{ steps.upstream.outputs.upstream_repo }}"
           UPSTREAM_REF="${{ steps.upstream.outputs.upstream_ref }}"
-          echo "Requested upstream: $UPSTREAM_REPO @$UPSTREAM_REF"
+          echo "请求的上游：$UPSTREAM_REPO @$UPSTREAM_REF"
 
           REF_TO_CLONE=""
           if git ls-remote --exit-code --heads "$UPSTREAM_REPO" "$UPSTREAM_REF" >/dev/null 2>&1 || \
              git ls-remote --exit-code --tags "$UPSTREAM_REPO" "$UPSTREAM_REF" >/dev/null 2>&1; then
             REF_TO_CLONE="$UPSTREAM_REF"
-            echo "Requested ref exists on remote: $REF_TO_CLONE"
+            echo "所请求的 ref 在远端存在：$REF_TO_CLONE"
           else
             DEFAULT_BRANCH=$(git ls-remote --symref "$UPSTREAM_REPO" HEAD 2>/dev/null | awk '/^ref: refs\/heads\//{print $2}' | sed 's@refs/heads/@@' | head -n1 || true)
             if [ -n "$DEFAULT_BRANCH" ]; then
-              echo "Requested ref '$UPSTREAM_REF' not found; falling back to remote default branch '$DEFAULT_BRANCH'"
+              echo "未找到所请求的 ref '$UPSTREAM_REF'，回退到远端默认分支 '$DEFAULT_BRANCH'"
               REF_TO_CLONE="$DEFAULT_BRANCH"
             else
-              echo "Requested ref '$UPSTREAM_REF' not found and remote default branch could not be determined; falling back to 'master'"
+              echo "未找到所请求的 ref '$UPSTREAM_REF'，也无法确定远端默认分支，回退到 'master'"
               REF_TO_CLONE="master"
             fi
           fi
@@ -97,9 +97,9 @@ jobs:
           mkdir -p "${{ runner.workspace }}/upstream"
 
           if git clone --depth 1 --branch "$REF_TO_CLONE" "$UPSTREAM_REPO" "${{ runner.workspace }}/upstream"; then
-            echo "Shallow clone of $REF_TO_CLONE succeeded"
+            echo "$REF_TO_CLONE 浅克隆成功"
           else
-            echo "Shallow clone failed, performing full clone and checkout"
+            echo "浅克隆失败，改为完整克隆并检出"
             rm -rf "${{ runner.workspace }}/upstream"
             git clone "$UPSTREAM_REPO" "${{ runner.workspace }}/upstream"
             cd "${{ runner.workspace }}/upstream"
@@ -111,28 +111,28 @@ jobs:
             fi
           fi
 
-      - name: Apply local overrides (optional)
+      - name: 应用本地覆盖文件（可选）
         shell: bash
         run: |
           set -e
           if [ -d "${{ github.workspace }}/overrides" ]; then
-            echo "Applying overrides from this repo to upstream..."
+            echo "正在把本仓库的 overrides 应用到上游…"
             cp -a "${{ github.workspace }}/overrides/." "${{ runner.workspace }}/upstream/" || true
           else
-            echo "No overrides/ directory found in repo; skipping overrides."
+            echo "仓库中没有 overrides/ 目录，跳过覆盖步骤。"
           fi
 
-      - name: Create build environment
+      - name: 创建构建目录
         shell: bash
         run: |
           set -e
           cmake -E make_directory "${{ runner.workspace }}/build"
 
-      - name: Show CMake version
+      - name: 显示 CMake 版本
         shell: bash
         run: cmake --version
 
-      - name: Configure CMake (use upstream source) (tests disabled)
+      - name: 配置 CMake（使用上游源码，禁用测试）
         shell: bash
         run: |
           set -e
@@ -140,39 +140,39 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release -DCOMPILER_WARNINGS_AS_ERRORS=ON -DBUILD_WITH_TESTS=OFF \
             -DDONT_EXECUTE_INSTALLER=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
-      - name: Register build problem matchers (safe)
+      - name: 注册构建问题匹配器（安全）
         shell: bash
         run: |
           set -euo pipefail
           for matcher in .github/problem-matchers/linguist.json .github/problem-matchers/compiler.json; do
             if [ -f "$matcher" ]; then
-              echo "Adding matcher: $matcher"
+              echo "正在添加匹配器：$matcher"
               echo "::add-matcher::$matcher"
             else
-              echo "Matcher not found, skipping: $matcher"
+              echo "未找到匹配器，跳过：$matcher"
             fi
           done
 
-      - name: Build (guarded, verbose)
+      - name: 构建（带守护与详细日志）
         shell: bash
         run: |
           set -euo pipefail
           BUILD_DIR="${{ runner.workspace }}/build"
           if [ ! -d "$BUILD_DIR" ]; then
-            echo "Build directory not found; aborting build step."
+            echo "未找到构建目录，终止构建步骤。"
             exit 1
           fi
           cd "$BUILD_DIR"
 
-          echo "Building birdtray (single-invocation cmake --build)..."
+          echo "正在构建 birdtray（单次调用 cmake --build）…"
           if ! cmake --build . --config Release --target birdtray; then
-            echo "Build FAILED. Dumping diagnostics..."
-            echo "Top-level build dir listing:"
+            echo "构建失败，正在转储诊断信息…"
+            echo "构建目录顶层列表："
             ls -la . || true
-            echo "Release dir listing:"
+            echo "Release 目录列表："
             ls -la Release || true
             find . -type f \( -iname "*.log" -o -iname "*.out" -o -iname "*.txt" \) -maxdepth 4 -print | while read f; do
-              echo "---- tail $f ----"
+              echo "---- $f 输出末尾 ----"
               tail -n 200 "$f" || true
             done
             if [ -f CMakeFiles/CMakeOutput.log ]; then
@@ -182,10 +182,10 @@ jobs:
             exit 1
           fi
 
-          echo "Build succeeded. Listing Release folder:"
+          echo "构建成功。列出 Release 目录："
           ls -la Release || true
 
-      - name: Remove build problem matchers
+      - name: 移除构建问题匹配器
         shell: bash
         run: |
           echo "::remove-matcher owner=linguist::"
@@ -193,26 +193,26 @@ jobs:
           echo "::remove-matcher owner=compiler-gcc::"
           echo "::remove-matcher owner=compiler-msvc::"
 
-      - name: Tests (guarded - only if tests project exists)
+      - name: 运行测试（仅当存在测试工程时）
         shell: bash
         run: |
           set -euo pipefail
           BUILD_DIR="${{ runner.workspace }}/build"
           if [ ! -d "$BUILD_DIR" ]; then
-            echo "Build directory not found; skipping tests."
+            echo "未找到构建目录，跳过测试。"
             exit 0
           fi
           # Look for a tests.vcxproj (Visual Studio generator) as an indicator
           TEST_PROJECT=$(find "$BUILD_DIR" -maxdepth 2 -type f -iname 'tests.vcxproj' -print -quit || true)
           if [ -z "$TEST_PROJECT" ]; then
-            echo "No tests project found; skipping tests."
+            echo "未找到测试工程，跳过测试。"
             exit 0
           fi
-          echo "Found tests project: $TEST_PROJECT"
+          echo "找到测试工程：$TEST_PROJECT"
           cd "$BUILD_DIR"
           cmake --build . --config Release --target tests && cmake --build . --config Release --target run_tests
 
-      - name: Check if this is a deployment build
+      - name: 判断是否为发布构建
         id: check-deploy
         shell: bash
         run: |
@@ -222,13 +222,13 @@ jobs:
             echo "is_deploy=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Bundle Qt dependencies (windeployqt) on Windows (guarded)
+      - name: 使用 windeployqt 打包 Qt 运行时（Windows）
         if: runner.os == 'Windows'
         shell: bash
         run: |
           set -euo pipefail
           if [ ! -d "${{ runner.workspace }}/build" ]; then
-            echo "Build directory not found; skipping windeployqt."
+            echo "未找到构建目录，跳过 windeployqt。"
             exit 0
           fi
           mkdir -p "${{ runner.workspace }}/dist"
@@ -237,13 +237,13 @@ jobs:
             WINDEPLOYQT=$(find "${RUNNER_TEMP}/Qt" -type f -name windeployqt.exe | head -n1 || true)
           fi
           if [ -z "$WINDEPLOYQT" ]; then
-            echo "windeployqt not found; ensure Qt bin is on PATH or adjust install-qt-action 'dir' setting"
+            echo "未找到 windeployqt，请确认 Qt bin 在 PATH 中，或调整 install-qt-action 的 'dir' 设置"
             exit 1
           fi
-          echo "Using windeployqt: $WINDEPLOYQT"
+          echo "使用的 windeployqt：$WINDEPLOYQT"
           "$WINDEPLOYQT" --release --dir "${{ runner.workspace }}/dist" "${{ runner.workspace }}/build/Release/birdtray.exe" || true
 
-      - name: Install to staging dir (cmake --install) (deploy only, guarded with explicit exe check)
+      - name: 安装到暂存目录（cmake --install，仅发布构建）
         if: steps.check-deploy.outputs.is_deploy == 'true'
         shell: bash
         run: |
@@ -251,14 +251,14 @@ jobs:
           BUILD_DIR="${{ runner.workspace }}/build"
           EXE_PATH="${BUILD_DIR}/Release/birdtray.exe"
           if [ ! -d "$BUILD_DIR" ]; then
-            echo "Build directory not found; skipping cmake --install."
+            echo "未找到构建目录，跳过 cmake --install。"
             exit 1
           fi
           if [ ! -f "$EXE_PATH" ]; then
-            echo "ERROR: birdtray.exe not found at expected path: $EXE_PATH"
-            echo "Build dir listing:"
+            echo "错误：未在预期路径找到 birdtray.exe：$EXE_PATH"
+            echo "构建目录列表："
             ls -la "$BUILD_DIR" || true
-            echo "Release dir listing:"
+            echo "Release 目录列表："
             ls -la "${BUILD_DIR}/Release" || true
             if [ -f "${BUILD_DIR}/CMakeFiles/CMakeOutput.log" ]; then
               echo "---- CMakeOutput.log ----"
@@ -269,13 +269,13 @@ jobs:
           cd "$BUILD_DIR"
           cmake --install . --config Release --prefix "${{ runner.workspace }}/dist" || true
 
-      - name: Prepare dist contents (move dist/bin/birdtray.exe -> dist/, collect translations)
+      - name: 整理 dist 产物（移动 birdtray.exe 并收集翻译文件）
         if: always()
         working-directory: ${{ runner.workspace }}
         shell: bash
         run: |
           set -euo pipefail
-          echo "Preparing dist contents..."
+          echo "正在整理 dist 产物…"
           mkdir -p "${{ runner.workspace }}/dist"
           mkdir -p "${{ runner.workspace }}/dist/translations"
 
@@ -283,21 +283,21 @@ jobs:
           ROOT_PATH="${{ runner.workspace }}/dist/birdtray.exe"
 
           if [ -f "$BIN_PATH" ]; then
-            echo "Moving $BIN_PATH -> $ROOT_PATH"
+            echo "正在移动 $BIN_PATH -> $ROOT_PATH"
             mv -f "$BIN_PATH" "$ROOT_PATH" || true
             rmdir "${{ runner.workspace }}/dist/bin" 2>/dev/null || rm -rf "${{ runner.workspace }}/dist/bin" || true
           elif [ -f "$ROOT_PATH" ]; then
-            echo "birdtray.exe already at $ROOT_PATH"
+            echo "birdtray.exe 已位于 $ROOT_PATH"
           else
-            echo "Searching for birdtray executables in workspace..."
+            echo "正在工作区中查找 birdtray 可执行文件…"
             FOUND=$(find "${{ runner.workspace }}" -type f -iname 'birdtray.exe' | head -n 1 || true)
             if [ -n "$FOUND" ]; then
-              echo "Found: $FOUND -> moving to $ROOT_PATH"
+              echo "找到：$FOUND -> 正在移动到 $ROOT_PATH"
               mv -f "$FOUND" "$ROOT_PATH" || true
               DIRNAME=$(dirname "$FOUND")
               rmdir "$DIRNAME" 2>/dev/null || true
             else
-              echo "No birdtray.exe found; check build/windeployqt/install output."
+              echo "未找到 birdtray.exe，请检查构建/windeployqt/安装步骤的输出。"
             fi
           fi
 
@@ -306,24 +306,24 @@ jobs:
           cp -r "${{ runner.workspace }}/upstream/po/"* "${{ runner.workspace }}/dist/translations/" 2>/dev/null || true
           cp -r "${{ runner.workspace }}/build/translations/"* "${{ runner.workspace }}/dist/translations/" 2>/dev/null || true
 
-          echo "Dist contents after prepare:"
+          echo "整理后的 dist 内容："
           ls -la "${{ runner.workspace }}/dist" || true
           ls -la "${{ runner.workspace }}/dist/translations" || true
 
-      - name: (optional) Debug show build/workspace layout
+      - name: 打印构建与工作区布局（可选，debug 时）
         if: ${{ always() && (steps.upstream.outputs.debug == 'true') }}
         shell: bash
         run: |
-          echo "Workspace: ${{ runner.workspace }}"
-          echo "GitHub workspace: ${{ github.workspace }}"
+          echo "runner 工作区：${{ runner.workspace }}"
+          echo "GitHub 工作区：${{ github.workspace }}"
           find "${{ runner.workspace }}" -maxdepth 3 -type d -print || true
-          echo "build/Release listing:"
+          echo "build/Release 目录列表："
           ls -la "${{ runner.workspace }}/build" || true
           ls -la "${{ runner.workspace }}/build/Release" || true
-          echo "dist listing:"
+          echo "dist 目录列表："
           ls -la "${{ runner.workspace }}/dist" || true
 
-      - name: Upload build artifacts
+      - name: 上传构建产物
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -336,16 +336,16 @@ jobs:
             ${{ runner.workspace }}/upstream/src/res/**/locales/**
             ${{ runner.workspace }}/upstream/src/res/**/translations/**
 
-      - name: Remove build directory (cleanup for non-deploy builds)
+      - name: 清理 build 目录（非发布构建）
         if: ${{ always() && !(github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')) }}
         shell: bash
         run: |
-          echo "Non-deploy build: removing build directory to free space..."
+          echo "非发布构建：正在删除 build 目录以释放空间…"
           rm -rf "${{ runner.workspace }}/build" || true
-          echo "After cleanup, runner workspace root:"
+          echo "清理后 runner 工作区根目录："
           ls -la "${{ runner.workspace }}" || true
 
-      - name: Validate desktop file and app metadata (Linux only)
+      - name: 校验 desktop 文件与应用元数据（仅 Linux）
         working-directory: ${{ runner.workspace }}/upstream
         if: runner.os == 'Linux'
         shell: bash
@@ -357,34 +357,34 @@ jobs:
           fi
           appstream-util validate src/res/com.ulduzsoft.Birdtray.appdata.xml
 
-      - name: Install installer dependencies (deploy only)
+      - name: 安装生成安装器所需依赖（仅发布构建）
         if: steps.check-deploy.outputs.is_deploy == 'true'
         run: choco install -y nsis --version=3.11
 
-      - name: Create installer (deploy only) (guarded)
+      - name: 生成安装器（仅发布构建）
         if: steps.check-deploy.outputs.is_deploy == 'true'
         shell: bash
         run: |
           set -euo pipefail
           if [ ! -d "${{ runner.workspace }}/build" ]; then
-            echo "Build directory not found; skipping installer creation."
+            echo "未找到构建目录，跳过生成安装器。"
             exit 1
           fi
           cd "${{ runner.workspace }}/build"
           cmake --build . --config Release --target install
 
-      - name: Find installer (deploy only)
+      - name: 查找安装器文件（仅发布构建）
         if: steps.check-deploy.outputs.is_deploy == 'true'
         id: find_installer_file
         shell: bash
         run: |
           installerFile=$(find . -name "Birdtray-*.exe" -exec basename {} \; 2>/dev/null || true)
           echo "installer_file=$installerFile" >> $GITHUB_OUTPUT
-          echo "Found installer: $installerFile"
+          echo "找到安装器：$installerFile"
           mkdir -p installer/cache
           mv installer/$installerFile installer/cache || true
 
-      - name: Cache installer (deploy only)
+      - name: 缓存安装器产物（仅发布构建）
         uses: actions/upload-artifact@v7
         if: steps.check-deploy.outputs.is_deploy == 'true'
         with:
@@ -392,37 +392,37 @@ jobs:
           path: installer/cache/${{ steps.find_installer_file.outputs.installer_file }}
 
   release:
-    name: Create Release
+    name: 创建发布
     needs: build
     if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v') && contains(github.ref, '.')
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout this repository
+      - name: 检出本仓库
         uses: actions/checkout@v7
 
-      - name: Check if this is a deployment build
+      - name: 判断是否为发布构建
         id: deploy_check
         shell: bash
         run: |
           if [[ '${{ github.event.ref }}' =~ ^refs/tags/(v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             echo "version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
           else
-            echo "Tag does not match: ${{ github.event.ref }}"
+            echo "标签不匹配：${{ github.event.ref }}"
             exit 1
           fi
 
-      - name: Verify that the app metadata contains the release
+      - name: 校验应用元数据中包含该版本号
         shell: bash
         run: |
-          grep "version=\"${{ steps.deploy_check.outputs.version }}\"" src/res/com.ulduzsoft.Birdtray.appdata.xml -q || (echo "Version not found in src/res/com.ulduzsoft.Birdtray.appdata.xml"; exit 1)
+          grep "version=\"${{ steps.deploy_check.outputs.version }}\"" src/res/com.ulduzsoft.Birdtray.appdata.xml -q || (echo "在 src/res/com.ulduzsoft.Birdtray.appdata.xml 中未找到该版本号"; exit 1)
 
-      - name: Download installer (x64)
+      - name: 下载安装器（x64）
         uses: actions/download-artifact@v4
         with:
           name: installer-Windows-x64-${{ github.sha }}
           path: installer
 
-      - name: Create Release
+      - name: 创建发布
         uses: ncipollo/release-action@v1
         with:
           name: Release ${{ steps.deploy_check.outputs.version }}
