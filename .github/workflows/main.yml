@@ -122,6 +122,27 @@ jobs:
             echo "仓库中没有 overrides/ 目录，跳过覆盖步骤。"
           fi
 
+      - name: 校验上游元数据中包含该版本号（仅发布构建）
+        if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')
+        env:
+          EVENT_REF: ${{ github.event.ref }}
+          UPSTREAM_DIR: ${{ runner.workspace }}/upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${EVENT_REF#refs/tags/}"
+          VERSION="${VERSION#v}"
+          APPDATA="${UPSTREAM_DIR}/src/res/com.ulduzsoft.Birdtray.appdata.xml"
+          if [ ! -f "$APPDATA" ]; then
+            echo "未找到上游元数据文件：$APPDATA"
+            exit 1
+          fi
+          if ! grep -q "version=\"${VERSION}\"" "$APPDATA"; then
+            echo "上游 $APPDATA 中没有 version=\"${VERSION}\" 的记录（tag 为 ${EVENT_REF}）"
+            exit 1
+          fi
+          echo "上游元数据已包含版本号 ${VERSION}"
+
       - name: 创建构建目录
         shell: bash
         run: |
@@ -376,20 +397,27 @@ jobs:
       - name: 查找安装器文件（仅发布构建）
         if: steps.check-deploy.outputs.is_deploy == 'true'
         id: find_installer_file
+        working-directory: ${{ runner.workspace }}/upstream
         shell: bash
         run: |
-          installerFile=$(find . -name "Birdtray-*.exe" -exec basename {} \; 2>/dev/null || true)
-          echo "installer_file=$installerFile" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          installerFile=$(find installer -maxdepth 1 -name "Birdtray-*.exe" -printf '%f\n' -quit 2>/dev/null || true)
+          if [ -z "$installerFile" ]; then
+            echo "未在 installer/ 下找到 Birdtray-*.exe，安装器可能没有生成成功"
+            ls -la installer || true
+            exit 1
+          fi
           echo "找到安装器：$installerFile"
           mkdir -p installer/cache
-          mv installer/$installerFile installer/cache || true
+          mv "installer/$installerFile" installer/cache/
+          echo "installer_file=$installerFile" >> $GITHUB_OUTPUT
 
       - name: 缓存安装器产物（仅发布构建）
         uses: actions/upload-artifact@v7
         if: steps.check-deploy.outputs.is_deploy == 'true'
         with:
           name: installer-${{ runner.os }}-${{ github.sha }}
-          path: installer/cache/${{ steps.find_installer_file.outputs.installer_file }}
+          path: ${{ runner.workspace }}/upstream/installer/cache/${{ steps.find_installer_file.outputs.installer_file }}
 
   release:
     name: 创建发布
@@ -411,15 +439,10 @@ jobs:
             exit 1
           fi
 
-      - name: 校验应用元数据中包含该版本号
-        shell: bash
-        run: |
-          grep "version=\"${{ steps.deploy_check.outputs.version }}\"" src/res/com.ulduzsoft.Birdtray.appdata.xml -q || (echo "在 src/res/com.ulduzsoft.Birdtray.appdata.xml 中未找到该版本号"; exit 1)
-
-      - name: 下载安装器（x64）
+      - name: 下载安装器（Windows）
         uses: actions/download-artifact@v4
         with:
-          name: installer-Windows-x64-${{ github.sha }}
+          name: installer-Windows-${{ github.sha }}
           path: installer
 
       - name: 创建发布
