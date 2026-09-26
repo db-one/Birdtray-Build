@@ -111,27 +111,6 @@ jobs:
             echo "仓库中没有 overrides/ 目录，跳过覆盖步骤。"
           fi
 
-      - name: 校验上游元数据中包含该版本号（仅发布构建）
-        if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')
-        env:
-          EVENT_REF: ${{ github.event.ref }}
-          UPSTREAM_DIR: ${{ runner.workspace }}/upstream
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="${EVENT_REF#refs/tags/}"
-          VERSION="${VERSION#v}"
-          APPDATA="${UPSTREAM_DIR}/src/res/com.ulduzsoft.Birdtray.appdata.xml"
-          if [ ! -f "$APPDATA" ]; then
-            echo "未找到上游元数据文件：$APPDATA"
-            exit 1
-          fi
-          if ! grep -q "version=\"${VERSION}\"" "$APPDATA"; then
-            echo "上游 $APPDATA 中没有 version=\"${VERSION}\" 的记录（tag 为 ${EVENT_REF}）"
-            exit 1
-          fi
-          echo "上游元数据已包含版本号 ${VERSION}"
-
       - name: 显示 CMake 版本
         shell: bash
         run: cmake --version
@@ -176,16 +155,6 @@ jobs:
           echo "构建成功。列出 Release 目录："
           ls -la Release || true
 
-      - name: 判断是否为发布构建
-        id: check-deploy
-        shell: bash
-        run: |
-          if [[ '${{ github.event.ref }}' =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "is_deploy=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_deploy=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: 使用 windeployqt 打包 Qt 运行时（Windows）
         shell: bash
         run: |
@@ -205,32 +174,6 @@ jobs:
           fi
           echo "使用的 windeployqt：$WINDEPLOYQT"
           "$WINDEPLOYQT" --release --dir "${{ runner.workspace }}/dist" "${{ runner.workspace }}/build/Release/birdtray.exe" || true
-
-      - name: 安装到暂存目录（cmake --install，仅发布构建）
-        if: steps.check-deploy.outputs.is_deploy == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          BUILD_DIR="${{ runner.workspace }}/build"
-          EXE_PATH="${BUILD_DIR}/Release/birdtray.exe"
-          if [ ! -d "$BUILD_DIR" ]; then
-            echo "未找到构建目录，跳过 cmake --install。"
-            exit 1
-          fi
-          if [ ! -f "$EXE_PATH" ]; then
-            echo "错误：未在预期路径找到 birdtray.exe：$EXE_PATH"
-            echo "构建目录列表："
-            ls -la "$BUILD_DIR" || true
-            echo "Release 目录列表："
-            ls -la "${BUILD_DIR}/Release" || true
-            if [ -f "${BUILD_DIR}/CMakeFiles/CMakeOutput.log" ]; then
-              echo "---- CMakeOutput.log ----"
-              tail -n 200 "${BUILD_DIR}/CMakeFiles/CMakeOutput.log" || true
-            fi
-            exit 1
-          fi
-          cd "$BUILD_DIR"
-          cmake --install . --config Release --prefix "${{ runner.workspace }}/dist" || true
 
       - name: 整理 dist 产物（移动 birdtray.exe 并收集翻译文件）
         if: always()
@@ -298,89 +241,3 @@ jobs:
             ${{ runner.workspace }}/build/**/*.dll
             ${{ runner.workspace }}/upstream/src/res/**/locales/**
             ${{ runner.workspace }}/upstream/src/res/**/translations/**
-
-      - name: 清理 build 目录（非发布构建）
-        if: ${{ always() && !(github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')) }}
-        shell: bash
-        run: |
-          echo "非发布构建：正在删除 build 目录以释放空间…"
-          rm -rf "${{ runner.workspace }}/build" || true
-          echo "清理后 runner 工作区根目录："
-          ls -la "${{ runner.workspace }}" || true
-
-      - name: 安装生成安装器所需依赖（仅发布构建）
-        if: steps.check-deploy.outputs.is_deploy == 'true'
-        run: choco install -y nsis --version=3.11
-
-      - name: 生成安装器（仅发布构建）
-        if: steps.check-deploy.outputs.is_deploy == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ ! -d "${{ runner.workspace }}/build" ]; then
-            echo "未找到构建目录，跳过生成安装器。"
-            exit 1
-          fi
-          cd "${{ runner.workspace }}/build"
-          cmake --build . --config Release --target install
-
-      - name: 查找安装器文件（仅发布构建）
-        if: steps.check-deploy.outputs.is_deploy == 'true'
-        id: find_installer_file
-        working-directory: ${{ runner.workspace }}/upstream
-        shell: bash
-        run: |
-          set -euo pipefail
-          installerFile=$(find installer -maxdepth 1 -name "Birdtray-*.exe" -printf '%f\n' -quit 2>/dev/null || true)
-          if [ -z "$installerFile" ]; then
-            echo "未在 installer/ 下找到 Birdtray-*.exe，安装器可能没有生成成功"
-            ls -la installer || true
-            exit 1
-          fi
-          echo "找到安装器：$installerFile"
-          mkdir -p installer/cache
-          mv "installer/$installerFile" installer/cache/
-          echo "installer_file=$installerFile" >> $GITHUB_OUTPUT
-
-      - name: 缓存安装器产物（仅发布构建）
-        uses: actions/upload-artifact@v7
-        if: steps.check-deploy.outputs.is_deploy == 'true'
-        with:
-          name: installer-${{ runner.os }}-${{ github.sha }}
-          path: ${{ runner.workspace }}/upstream/installer/cache/${{ steps.find_installer_file.outputs.installer_file }}
-
-  release:
-    name: 创建发布
-    needs: build
-    if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v') && contains(github.ref, '.')
-    runs-on: ubuntu-latest
-    steps:
-      - name: 检出本仓库
-        uses: actions/checkout@v7
-
-      - name: 判断是否为发布构建
-        id: deploy_check
-        shell: bash
-        run: |
-          if [[ '${{ github.event.ref }}' =~ ^refs/tags/(v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
-          else
-            echo "标签不匹配：${{ github.event.ref }}"
-            exit 1
-          fi
-
-      - name: 下载安装器（Windows）
-        uses: actions/download-artifact@v4
-        with:
-          name: installer-Windows-${{ github.sha }}
-          path: installer
-
-      - name: 创建发布
-        uses: ncipollo/release-action@v1
-        with:
-          name: Release ${{ steps.deploy_check.outputs.version }}
-          draft: true
-          artifacts: installer*/Birdtray-*.exe
-          artifactContentType: application/x-msdownload
-          artifactErrorsFailBuild: true
-          generateReleaseNotes: true
