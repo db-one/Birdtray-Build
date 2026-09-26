@@ -20,14 +20,11 @@ env:
 jobs:
   build:
     name: 构建
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     strategy:
       matrix:
-        os: [windows-latest]
         qt_version: [6.8.0]
-        include:
-          - os: windows-latest
-            qt_compile_suite: win64_msvc2022_64
+        qt_compile_suite: [win64_msvc2022_64]
 
     steps:
       - name: 检出本仓库（workflow 与可选 overrides）
@@ -58,16 +55,8 @@ jobs:
       - name: 安装附加依赖
         shell: bash
         run: |
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            sudo apt-get update -qq
-            sudo apt install -qq libx11-dev libx11-xcb-dev desktop-file-utils appstream-util
-          elif [ "$RUNNER_OS" == "Windows" ]; then
-            choco install -y --force openssl.light --version=1.1.1
-            echo "C:\Program Files\OpenSSL" >> $GITHUB_PATH
-          else
-            echo "$RUNNER_OS 不受支持"
-            exit 1
-          fi
+          choco install -y --force openssl.light --version=1.1.1
+          echo "C:\Program Files\OpenSSL" >> $GITHUB_PATH
 
       - name: 克隆上游源码（gyunaev/birdtray，带回退）
         shell: bash
@@ -191,14 +180,13 @@ jobs:
         id: check-deploy
         shell: bash
         run: |
-          if [[ '${{ github.event.ref }}' =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ && "$RUNNER_OS" == "Windows" ]]; then
+          if [[ '${{ github.event.ref }}' =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "is_deploy=true" >> $GITHUB_OUTPUT
           else
             echo "is_deploy=false" >> $GITHUB_OUTPUT
           fi
 
       - name: 使用 windeployqt 打包 Qt 运行时（Windows）
-        if: runner.os == 'Windows'
         shell: bash
         run: |
           set -euo pipefail

@@ -29,12 +29,6 @@
   3. 在本地复制 upstream 源码后运行：
      cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_TESTS=OFF -DDONT_EXECUTE_INSTALLER=ON
      cmake --build build --config Release --target birdtray
-- Linux：
-  - 需要 cmake、g++/clang、Qt 以及桌面相关工具（desktop-file-utils、appstream-util 等）
-  - 示例：
-    sudo apt install build-essential cmake qtbase5-dev qttools5-dev-tools desktop-file-utils appstream-util
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_TESTS=OFF
-    cmake --build build --config Release
 
 重要 CI/构建依赖（Windows）
 - Visual Studio / MSVC (tested: VS 2022 / MSVC)
