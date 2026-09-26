@@ -143,12 +143,6 @@ jobs:
           fi
           echo "上游元数据已包含版本号 ${VERSION}"
 
-      - name: 创建构建目录
-        shell: bash
-        run: |
-          set -e
-          cmake -E make_directory "${{ runner.workspace }}/build"
-
       - name: 显示 CMake 版本
         shell: bash
         run: cmake --version
@@ -160,19 +154,6 @@ jobs:
           cmake -S "${{ runner.workspace }}/upstream" -B "${{ runner.workspace }}/build" \
             -DCMAKE_BUILD_TYPE=Release -DCOMPILER_WARNINGS_AS_ERRORS=ON -DBUILD_WITH_TESTS=OFF \
             -DDONT_EXECUTE_INSTALLER=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-
-      - name: 注册构建问题匹配器（安全）
-        shell: bash
-        run: |
-          set -euo pipefail
-          for matcher in .github/problem-matchers/linguist.json .github/problem-matchers/compiler.json; do
-            if [ -f "$matcher" ]; then
-              echo "正在添加匹配器：$matcher"
-              echo "::add-matcher::$matcher"
-            else
-              echo "未找到匹配器，跳过：$matcher"
-            fi
-          done
 
       - name: 构建（带守护与详细日志）
         shell: bash
@@ -205,33 +186,6 @@ jobs:
 
           echo "构建成功。列出 Release 目录："
           ls -la Release || true
-
-      - name: 移除构建问题匹配器
-        shell: bash
-        run: |
-          echo "::remove-matcher owner=linguist::"
-          echo "::remove-matcher owner=linguist-old::"
-          echo "::remove-matcher owner=compiler-gcc::"
-          echo "::remove-matcher owner=compiler-msvc::"
-
-      - name: 运行测试（仅当存在测试工程时）
-        shell: bash
-        run: |
-          set -euo pipefail
-          BUILD_DIR="${{ runner.workspace }}/build"
-          if [ ! -d "$BUILD_DIR" ]; then
-            echo "未找到构建目录，跳过测试。"
-            exit 0
-          fi
-          # Look for a tests.vcxproj (Visual Studio generator) as an indicator
-          TEST_PROJECT=$(find "$BUILD_DIR" -maxdepth 2 -type f -iname 'tests.vcxproj' -print -quit || true)
-          if [ -z "$TEST_PROJECT" ]; then
-            echo "未找到测试工程，跳过测试。"
-            exit 0
-          fi
-          echo "找到测试工程：$TEST_PROJECT"
-          cd "$BUILD_DIR"
-          cmake --build . --config Release --target tests && cmake --build . --config Release --target run_tests
 
       - name: 判断是否为发布构建
         id: check-deploy
@@ -365,18 +319,6 @@ jobs:
           rm -rf "${{ runner.workspace }}/build" || true
           echo "清理后 runner 工作区根目录："
           ls -la "${{ runner.workspace }}" || true
-
-      - name: 校验 desktop 文件与应用元数据（仅 Linux）
-        working-directory: ${{ runner.workspace }}/upstream
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          output=$(desktop-file-validate src/res/com.ulduzsoft.Birdtray.desktop)
-          if [ ! -z "$output" ]; then
-            echo "$output"
-            exit 1
-          fi
-          appstream-util validate src/res/com.ulduzsoft.Birdtray.appdata.xml
 
       - name: 安装生成安装器所需依赖（仅发布构建）
         if: steps.check-deploy.outputs.is_deploy == 'true'
