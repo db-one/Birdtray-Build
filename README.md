@@ -6,20 +6,24 @@
 - 上游项目（源码）： https://github.com/gyunaev/birdtray
 - 本仓库职责：在 Actions runner 上拉取 upstream 源码，应用可选覆盖（overrides/），运行 CMake 构建并收集产物。
 - CI 触发：
-  - 手动：workflow_dispatch（支持参数 upstream_ref、upstream_repo、debug）
+  - 定时：每天北京时间早上 8:00（cron 0 0 * * *）自动检测上游版本，有新版本才编译
+  - 手动：workflow_dispatch（支持参数 upstream_ref、upstream_repo、debug、force_build）
 
 主要特性
-- 在运行时克隆 upstream 仓库并按指定 ref（branch/tag/commit）构建
+- **版本检测**：浅克隆上游默认分支，从源码 `src/version.h` 读取 Birdtray 版本（如 1.12.4），与本仓库已有的 GitHub Release（tag `v<版本号>`）比对；已存在则跳过构建，有新版本才继续编译。注意：上游 tag 更新滞后（最新 tag 仅 v1.11.4，而源码已是 1.12.4），因此**不能用 tag 判断版本**。
+- 在运行时克隆 upstream 仓库并按指定 ref（branch/tag/commit）构建，构建提交固定为检测时的 commit，保证产物与版本号对应。
 - 可把本仓库的 overrides/ 目录内容应用到 upstream（用于补丁）
-- 支持 Windows 构建（MSVC + Qt），并使用 windeployqt 打包 Qt 运行时
+- 支持 Windows 构建（MSVC + Qt 6.8.0），并使用 windeployqt 打包 Qt 运行时
+- 构建成功后自动创建 GitHub Release（tag = `v<源码版本号>`），并上传带版本号的安装包；构建 job 名称也显示 Birdtray 版本号
 - CI 中包含若干保护与诊断逻辑（回退到 upstream 默认分支、构建失败时收集日志）
 
 快速开始（本仓库）
 1. 将本仓库 checkout 到你的组织/个人空间（或直接在此仓库触发 workflow）。
 2. 可通过 GitHub Actions 页面手动触发 workflow（workflow_dispatch）并传入：
-   - upstream_ref：要构建的上游分支/tag/commit（默认：main，但脚本会在 remote 上找不到时回退到 upstream 的默认分支或 master）
+   - upstream_ref：要构建的上游分支/tag/commit（默认：上游默认分支 master；手动指定时跳过版本比对直接构建，ref 不存在则回退默认分支）
    - upstream_repo：要构建的上游仓库 URL（默认：https://github.com/gyunaev/birdtray.git）
    - debug：true/false，开启后会打印 workspace 布局等额外调试信息
+   - force_build：true/false，跳过版本检测强制构建（用于重新构建已有版本）
 
 本地构建（参考）
 - Windows（推荐使用 Visual Studio 2022（MSVC）和 Qt 6.x）：
@@ -39,8 +43,9 @@ overrides/（可选）
 - CI 会在克隆 upstream 后把 overrides/ 的内容拷贝到 upstream 工作树，覆盖对应文件。
 
 产物
-- CI 会把最终 `dist/` 目录（包含可执行文件、Qt 运行时与 translations 等）作为 artifact 上传，名称为 `birdtray-Windows-<commit sha>`。
-- 不做版本发布：workflow 仅由 workflow_dispatch 手动触发，不监听 push/tag，也不会创建 GitHub Release。
+- 构建 job 只在检测到新版本（或手动触发）时才会运行；无新版本时运行会在检测阶段结束，不消耗 Windows 构建资源。
+- CI 会把最终 `dist/` 目录（包含可执行文件、Qt 运行时与 translations 等）作为 artifact 上传，名称为 `birdtray-Windows-<上游版本号>`。
+- 构建成功后会自动创建 GitHub Release：tag 为 `v<源码版本号>`（如 `v1.12.4`）、标题为 `Birdtray <源码版本号>`，附件为 `Birdtray-<版本号>-Windows-x64.zip`（含 birdtray.exe、Qt 运行时与翻译文件）。版本比对与 Release 发布是幂等的，重复运行不会产生重复 Release。
 
 调试/故障排查（常见问题）
 - Remote branch not found
