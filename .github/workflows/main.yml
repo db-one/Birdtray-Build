@@ -1,10 +1,13 @@
 name: 构建 Birdtray（上游源码）
 
 on:
+  schedule:
+    # UTC 0:00 = 北京时间每天早上 8:00，自动检测上游是否有新版本
+    - cron: '0 0 * * *'
   workflow_dispatch:
     inputs:
       upstream_ref:
-        description: '要构建的上游分支/标签/提交（默认：main）'
+        description: '要构建的上游分支/标签/提交（默认：自动取上游最新版本 tag）'
         required: false
       upstream_repo:
         description: '要构建的上游仓库 URL（默认：https://github.com/gyunaev/birdtray.git）'
@@ -12,14 +15,116 @@ on:
       debug:
         description: '是否输出额外调试信息（true 或 false）'
         required: false
+      force_build:
+        description: '跳过版本检测强制构建（true 或 false）'
+        required: false
 
 env:
   DEFAULT_UPSTREAM_REPO: 'https://github.com/gyunaev/birdtray.git'
-  DEFAULT_UPSTREAM_REF: 'main'
+
+permissions:
+  contents: write # 创建 Release 和 tag 需要
 
 jobs:
+  check:
+    name: 检测上游版本
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.detect.outputs.version }}
+      upstream_repo: ${{ steps.detect.outputs.upstream_repo }}
+      upstream_ref: ${{ steps.detect.outputs.upstream_ref }}
+      debug: ${{ steps.detect.outputs.debug }}
+      should_build: ${{ steps.detect.outputs.should_build }}
+
+    steps:
+      - name: 检出本仓库
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: 检测上游最新版本并与已发布版本比对
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          UPSTREAM_REPO="${{ github.event.inputs.upstream_repo || env.DEFAULT_UPSTREAM_REPO }}"
+          MANUAL_REF="${{ github.event.inputs.upstream_ref || '' }}"
+          FORCE_BUILD="${{ github.event.inputs.force_build || 'false' }}"
+          DEBUG="${{ github.event.inputs.debug || 'false' }}"
+
+          echo "上游仓库：$UPSTREAM_REPO"
+
+          # 取上游最新的版本 tag（按版本号降序排，过滤掉非版本号 tag）
+          LATEST_TAG=$(git ls-remote --tags --sort=-v:refname "$UPSTREAM_REPO" \
+            | awk -F'/' '/refs\/tags\// && !/\^\{\}$/{print $3}' \
+            | grep -E '^[vV]?[0-9]+(\.[0-9]+)+$' \
+            | head -n1 || true)
+
+          # 手动指定了上游 ref 时，优先使用它（若它是 tag 就作为版本号）
+          if [ -n "$MANUAL_REF" ]; then
+            echo "手动指定了上游 ref：$MANUAL_REF，跳过版本比对直接构建"
+            UPSTREAM_REF="$MANUAL_REF"
+            VERSION="$MANUAL_REF"
+            # 若手动 ref 不是版本号 tag，用「ref-短提交」作为版本标记，避免 Release 重名
+            if ! echo "$VERSION" | grep -qE '^[vV]?[0-9]+(\.[0-9]+)+$'; then
+              REF_SHA=$(git ls-remote "$UPSTREAM_REPO" "$MANUAL_REF" refs/heads/* | awk '{print substr($1,1,7); exit}')
+              VERSION="${MANUAL_REF}-${REF_SHA:-manual}"
+            fi
+            SHOULD_BUILD="true"
+          elif [ "$FORCE_BUILD" = "true" ]; then
+            echo "强制构建模式，跳过版本比对"
+            UPSTREAM_REF="${LATEST_TAG:-}"
+            VERSION="${LATEST_TAG:-manual-$(date +%Y%m%d)}"
+            SHOULD_BUILD="true"
+          elif [ -n "$LATEST_TAG" ]; then
+            echo "上游最新版本 tag：$LATEST_TAG"
+            UPSTREAM_REF="$LATEST_TAG"
+            VERSION="$LATEST_TAG"
+
+            # 与本仓库已有 Release 比对：该版本已发布过则跳过构建
+            if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "本仓库已存在 $VERSION 的 Release，无需重新构建。"
+              SHOULD_BUILD="false"
+            else
+              echo "检测到新版本 $VERSION（本仓库尚无对应 Release），开始构建。"
+              SHOULD_BUILD="true"
+            fi
+          else
+            # 上游没有任何版本号 tag：回退用默认分支最新提交做版本标记
+            DEFAULT_BRANCH=$(git ls-remote --symref "$UPSTREAM_REPO" HEAD \
+              | awk '/^ref: refs\/heads\//{sub("refs/heads/", "", $2); print $2; exit}')
+            UPSTREAM_REF="${DEFAULT_BRANCH:-master}"
+            REF_SHA=$(git ls-remote "$UPSTREAM_REPO" "$UPSTREAM_REF" HEAD | awk '{print substr($1,1,7); exit}')
+            VERSION="${UPSTREAM_REF}-${REF_SHA:-$(date +%Y%m%d)}"
+            echo "上游未找到版本号 tag，回退构建默认分支，版本标记：$VERSION"
+            if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "本仓库已存在 $VERSION 的 Release，无需重新构建。"
+              SHOULD_BUILD="false"
+            else
+              SHOULD_BUILD="true"
+            fi
+          fi
+
+          echo "version=$VERSION"            >> "$GITHUB_OUTPUT"
+          echo "upstream_repo=$UPSTREAM_REPO" >> "$GITHUB_OUTPUT"
+          echo "upstream_ref=$UPSTREAM_REF"   >> "$GITHUB_OUTPUT"
+          echo "debug=$DEBUG"                 >> "$GITHUB_OUTPUT"
+          echo "should_build=$SHOULD_BUILD"   >> "$GITHUB_OUTPUT"
+
+      - name: 检测结果
+        shell: bash
+        run: |
+          echo "版本：${{ steps.detect.outputs.version }}"
+          echo "上游 ref：${{ steps.detect.outputs.upstream_ref }}"
+          echo "是否构建：${{ steps.detect.outputs.should_build }}"
+
   build:
     name: 构建
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
     runs-on: windows-latest
     strategy:
       matrix:
@@ -31,18 +136,6 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
-
-      - name: 确定上游仓库与 ref
-        id: upstream
-        shell: bash
-        run: |
-          set -euo pipefail
-          UPSTREAM_REPO="${{ github.event.inputs.upstream_repo || env.DEFAULT_UPSTREAM_REPO }}"
-          UPSTREAM_REF="${{ github.event.inputs.upstream_ref || env.DEFAULT_UPSTREAM_REF }}"
-          DEBUG="${{ github.event.inputs.debug || 'false' }}"
-          echo "upstream_repo=$UPSTREAM_REPO" >> $GITHUB_OUTPUT
-          echo "upstream_ref=$UPSTREAM_REF" >> $GITHUB_OUTPUT
-          echo "debug=$DEBUG" >> $GITHUB_OUTPUT
 
       - name: 安装 Qt ${{ matrix.qt_version }}
         uses: jurplel/install-qt-action@v4
@@ -62,13 +155,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          UPSTREAM_REPO="${{ steps.upstream.outputs.upstream_repo }}"
-          UPSTREAM_REF="${{ steps.upstream.outputs.upstream_ref }}"
+          UPSTREAM_REPO="${{ needs.check.outputs.upstream_repo }}"
+          UPSTREAM_REF="${{ needs.check.outputs.upstream_ref }}"
+          DEBUG="${{ needs.check.outputs.debug }}"
           echo "请求的上游：$UPSTREAM_REPO @$UPSTREAM_REF"
 
           REF_TO_CLONE=""
-          if git ls-remote --exit-code --heads "$UPSTREAM_REPO" "$UPSTREAM_REF" >/dev/null 2>&1 || \
-             git ls-remote --exit-code --tags "$UPSTREAM_REPO" "$UPSTREAM_REF" >/dev/null 2>&1; then
+          if [ -n "$UPSTREAM_REF" ] && \
+             (git ls-remote --exit-code --heads "$UPSTREAM_REPO" "$UPSTREAM_REF" >/dev/null 2>&1 || \
+              git ls-remote --exit-code --tags "$UPSTREAM_REPO" "$UPSTREAM_REF" >/dev/null 2>&1); then
             REF_TO_CLONE="$UPSTREAM_REF"
             echo "所请求的 ref 在远端存在：$REF_TO_CLONE"
           else
@@ -216,8 +311,23 @@ jobs:
           ls -la "${{ runner.workspace }}/dist" || true
           ls -la "${{ runner.workspace }}/dist/translations" || true
 
+      - name: 打包 zip（文件名带版本号）
+        if: success()
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zipName = "Birdtray-$env:VERSION-Windows-x64.zip"
+          $zipPath = Join-Path $env:RUNNER_WORKSPACE $zipName
+          if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+          Compress-Archive -Path (Join-Path $env:RUNNER_WORKSPACE 'dist/*') -DestinationPath $zipPath -Force
+          "ZIP_PATH=$zipPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ZIP_NAME=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "已打包：$zipPath"
+
       - name: 打印构建与工作区布局（可选，debug 时）
-        if: ${{ always() && (steps.upstream.outputs.debug == 'true') }}
+        if: ${{ always() && (needs.check.outputs.debug == 'true') }}
         shell: bash
         run: |
           echo "runner 工作区：${{ runner.workspace }}"
@@ -232,8 +342,10 @@ jobs:
       - name: 上传构建产物
         if: always()
         uses: actions/upload-artifact@v7
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
         with:
-          name: birdtray-${{ runner.os }}-${{ github.sha }}
+          name: birdtray-${{ runner.os }}-${{ needs.check.outputs.version }}
           path: |
             ${{ runner.workspace }}/dist/**
             ${{ runner.workspace }}/dist/translations/**
@@ -241,3 +353,37 @@ jobs:
             ${{ runner.workspace }}/build/**/*.dll
             ${{ runner.workspace }}/upstream/src/res/**/locales/**
             ${{ runner.workspace }}/upstream/src/res/**/translations/**
+
+      - name: 创建 GitHub Release 并上传安装包
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.check.outputs.version }}"
+          ZIP_PATH="${{ env.ZIP_PATH }}"
+          ZIP_NAME="${{ env.ZIP_NAME }}"
+
+          if [ ! -f "$ZIP_PATH" ]; then
+            echo "未找到打包文件 $ZIP_PATH，跳过 Release 发布。"
+            exit 1
+          fi
+
+          # 幂等保护：若 Release 已存在（例如手动重跑），只补传文件
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $VERSION 已存在，尝试补充上传文件…"
+            gh release upload "$VERSION" "$ZIP_PATH" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            UPSTREAM_URL="${{ needs.check.outputs.upstream_repo }}"
+            gh release create "$VERSION" "$ZIP_PATH" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Birdtray $VERSION" \
+              --notes "自动构建自上游 [$UPSTREAM_URL]($UPSTREAM_URL) 的 $VERSION 版本。
+
+          - 平台：Windows x64
+          - 内容：birdtray.exe + Qt 运行时 + 翻译文件
+          - 构建时间：$(date -u '+%Y-%m-%d %H:%M UTC')"
+          fi
+
+          echo "Release $VERSION 发布完成。"
